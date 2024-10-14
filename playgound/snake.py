@@ -50,11 +50,12 @@ class SnakeSegment(pygame.sprite.Sprite):
 class Snake:
     def __init__(self, color, start_pos):
         self.color = color
-        self.segments = pygame.sprite.Group()
+        self.segments = []
         self.direction = pygame.K_RIGHT
         self.positions = [start_pos]
         head = SnakeSegment(self.positions[0], self.color)
-        self.segments.add(head)
+        self.segments.append(head)
+        self.growing = False
 
     def move(self):
         x, y = self.positions[0]
@@ -67,15 +68,17 @@ class Snake:
         elif self.direction == pygame.K_RIGHT:
             x += GRID_SIZE
         new_head_pos = (x % SCREEN_WIDTH, y % SCREEN_HEIGHT)
-        self.positions = [new_head_pos] + self.positions[:-1]
-        for segment, pos in zip(self.segments.sprites(), self.positions):
-            segment.rect.topleft = pos
+        self.positions.insert(0, new_head_pos)
+        if not self.growing:
+            self.positions.pop()
+            self.segments.pop()
+        else:
+            self.growing = False
+        new_head_segment = SnakeSegment(new_head_pos, self.color)
+        self.segments.insert(0, new_head_segment)
 
     def grow(self):
-        tail = self.positions[-1]
-        self.positions.append(tail)
-        new_segment = SnakeSegment(tail, self.color)
-        self.segments.add(new_segment)
+        self.growing = True
 
     def check_collision(self):
         # Check for collision with self
@@ -85,7 +88,7 @@ class Snake:
 
     @property
     def head_rect(self):
-        return self.segments.sprites()[0].rect
+        return self.segments[0].rect
 
 class Food(pygame.sprite.Sprite):
     def __init__(self):
@@ -144,7 +147,7 @@ class Game:
         self.settings = settings
         self.players = []
         self.food = Food()
-        self.all_sprites = pygame.sprite.Group()
+        self.game_over = False
 
         # Initialize players
         colors = [self.settings['snake_color']]
@@ -154,10 +157,12 @@ class Game:
         for i in range(self.settings['player_count']):
             player = Player(i+1, colors[i])
             self.players.append(player)
-            self.all_sprites.add(player.snake.segments)
 
+        self.all_sprites = pygame.sprite.Group()
+        for player in self.players:
+            for segment in player.snake.segments:
+                self.all_sprites.add(segment)
         self.all_sprites.add(self.food)
-        self.game_over = False
 
     def run(self):
         clock = pygame.time.Clock()
@@ -166,12 +171,23 @@ class Game:
                 if event.type == pygame.QUIT:
                     return 'quit'
                 if event.type == pygame.KEYDOWN:
+                    # Quit the game by pressing 'Q'
+                    if event.key == pygame.K_q:
+                        return 'quit'
                     for player in self.players:
                         player.update_direction(event.key)
 
             # Update game state
             for player in self.players:
                 player.snake.move()
+
+                # Update all sprites with new segments
+                self.all_sprites.empty()
+                for p in self.players:
+                    for segment in p.snake.segments:
+                        self.all_sprites.add(segment)
+                self.all_sprites.add(self.food)
+
                 if player.snake.check_collision():
                     self.game_over = True  # Game over
 
@@ -183,12 +199,22 @@ class Game:
 
             # Check for collisions between snakes in two-player mode
             if len(self.players) == 2:
-                if self.players[0].snake.head_rect.colliderect(self.players[1].snake.head_rect):
+                # Player 1 collides with Player 2
+                if self.check_snake_collision(self.players[0], self.players[1]):
+                    self.game_over = True
+
+                # Player 2 collides with Player 1
+                if self.check_snake_collision(self.players[1], self.players[0]):
                     self.game_over = True
 
             # Render
             screen.fill(BLACK)
-            self.all_sprites.draw(screen)
+            for player in self.players:
+                for segment in player.snake.segments:
+                    screen.blit(segment.image, segment.rect)
+
+            # Draw food
+            screen.blit(self.food.image, self.food.rect)
 
             # Draw scores
             for idx, player in enumerate(self.players):
@@ -199,6 +225,13 @@ class Game:
             clock.tick(10)
 
         return 'game_over'
+
+    def check_snake_collision(self, player1, player2):
+        # Check if player1's head collides with any segment of player2
+        head_pos = player1.snake.positions[0]
+        if head_pos in player2.snake.positions:
+            return True
+        return False
 
     def get_scores(self):
         return {f'Player {p.player_id}': p.score for p in self.players}
@@ -212,29 +245,35 @@ class MainMenu:
         }
         self.selected_color = 0
         self.colors = [(0, 255, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
+        self.color_names = ["Green", "Yellow", "Magenta", "Cyan"]
         self.player_count = 1
+        self.step = 1  # Step 1: Choose color, Step 2: Choose player count
 
     def run(self):
         while True:
             screen.fill(BLACK)
             draw_text("Snake Game", font_large, WHITE, screen, SCREEN_WIDTH // 2, 80)
 
-            # Color selection
-            draw_text("Select Snake Color:", font_small, WHITE, screen, SCREEN_WIDTH // 2, 150)
-            color_names = ["Green", "Yellow", "Magenta", "Cyan"]
-            for idx, color_name in enumerate(color_names):
-                color = WHITE if idx == self.selected_color else (100, 100, 100)
-                draw_text(color_name, font_small, color, screen, SCREEN_WIDTH // 2, 180 + idx * 30)
+            if self.step == 1:
+                # Color selection
+                draw_text("Select Snake Color:", font_small, WHITE, screen, SCREEN_WIDTH // 2, 150)
+                for idx, color_name in enumerate(self.color_names):
+                    color = WHITE if idx == self.selected_color else (100, 100, 100)
+                    draw_text(color_name, font_small, color, screen, SCREEN_WIDTH // 2, 180 + idx * 30)
+                draw_text("Press ENTER to confirm color", font_small, WHITE, screen, SCREEN_WIDTH // 2, 330)
 
-            # Player count selection
-            draw_text("Select Player Count:", font_small, WHITE, screen, SCREEN_WIDTH // 2, 300)
-            player_counts = [1, 2]
-            for idx, count in enumerate(player_counts):
-                color = WHITE if count == self.player_count else (100, 100, 100)
-                draw_text(f"{count} Player", font_small, color, screen, SCREEN_WIDTH // 2, 330 + idx * 30)
+            elif self.step == 2:
+                # Player count selection
+                draw_text("Select Player Count:", font_small, WHITE, screen, SCREEN_WIDTH // 2, 150)
+                player_counts = [1, 2]
+                for idx, count in enumerate(player_counts):
+                    color = WHITE if count == self.player_count else (100, 100, 100)
+                    draw_text(f"{count} Player", font_small, color, screen, SCREEN_WIDTH // 2, 180 + idx * 30)
+                draw_text("Press ENTER to confirm player count", font_small, WHITE, screen, SCREEN_WIDTH // 2, 270)
 
-            # Instructions
-            draw_text("Press ENTER to Start", font_small, WHITE, screen, SCREEN_WIDTH // 2, 400)
+            elif self.step == 3:
+                # Ready to start
+                draw_text("Press SPACE to Start the Game", font_small, WHITE, screen, SCREEN_WIDTH // 2, 200)
 
             pygame.display.flip()
 
@@ -244,18 +283,25 @@ class MainMenu:
                     pygame.quit()
                     sys.exit()
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_UP:
-                        if self.selected_color > 0:
-                            self.selected_color -= 1
-                    elif event.key == pygame.K_DOWN:
-                        if self.selected_color < len(self.colors) - 1:
-                            self.selected_color += 1
-                    elif event.key == pygame.K_LEFT or event.key == pygame.K_RIGHT:
-                        self.player_count = 1 if self.player_count == 2 else 2
-                    elif event.key == pygame.K_RETURN:
-                        self.options['snake_color'] = self.colors[self.selected_color]
-                        self.options['player_count'] = self.player_count
-                        return self.options
+                    if self.step == 1:
+                        if event.key == pygame.K_UP:
+                            if self.selected_color > 0:
+                                self.selected_color -= 1
+                        elif event.key == pygame.K_DOWN:
+                            if self.selected_color < len(self.colors) - 1:
+                                self.selected_color += 1
+                        elif event.key == pygame.K_RETURN:
+                            self.options['snake_color'] = self.colors[self.selected_color]
+                            self.step = 2  # Move to next step
+                    elif self.step == 2:
+                        if event.key == pygame.K_UP or event.key == pygame.K_DOWN:
+                            self.player_count = 1 if self.player_count == 2 else 2
+                        elif event.key == pygame.K_RETURN:
+                            self.options['player_count'] = self.player_count
+                            self.step = 3  # Move to next step
+                    elif self.step == 3:
+                        if event.key == pygame.K_SPACE:
+                            return self.options
 
 # Game Over Screen Class
 class GameOverScreen:
@@ -313,8 +359,8 @@ def main():
         elif game_state == STATE_GAME_OVER:
             action = game_over_screen.run()
             if action == 'restart':
-                game = Game(game.settings)
-                game_state = STATE_PLAYING
+                main_menu = MainMenu()  # Reset the menu to start fresh
+                game_state = STATE_MAIN_MENU
             elif action == 'quit':
                 running = False
 
